@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VisionAI — Person detections</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <style>
+    .detection-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 1rem; margin-bottom: 1rem; display: flex; gap: 1rem; align-items: flex-start;
+    }
+    .detection-card .thumb { width: 120px; height: 160px; object-fit: cover; border-radius: 6px; background: var(--bg); }
+    .detection-card .thumb.missing { display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 0.85rem; }
+    .detection-card .meta { flex: 1; }
+    .detection-card .type-badge { display: inline-block; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: 600; margin-bottom: 0.5rem; }
+    .detection-card .type-badge.authorised { background: rgba(34,197,94,0.2); color: var(--success); }
+    .detection-card .type-badge.unauthorised { background: rgba(239,68,68,0.2); color: #f87171; }
+    .filter-bar { margin-bottom: 1rem; display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+    .filter-bar select, .filter-bar input { padding: 0.4rem 0.6rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+  </style>
+</head>
+<body>
+  <nav class="navbar">
+    <div class="brand">VisionAI</div>
+    <div class="nav-links">
+      <a href="/">Dashboard</a>
+      <a href="/employees">Employees</a>
+      <a href="/reports">Reports</a>
+      <a href="/detections" class="active">Person detections</a>
+      <a href="/docs" target="_blank">API Docs</a>
+    </div>
+  </nav>
+
+  <main class="container">
+    <h1 style="margin-bottom: 0.5rem;">Person detections</h1>
+    <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 0.5rem;">Authorised (employees on shift) and unauthorised (unknown) persons detected, with captured images. Run the pipeline to capture new sightings.</p>
+
+    <div class="hint-box" style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 0.85rem; color: var(--text-muted);">
+      <strong style="color: var(--text);">What is “track #1, #2, #9”?</strong> During one pipeline run (one video or one live stream), each <em>distinct person</em> the system starts following gets a track number: track 1 = first person seen, track 2 = second, etc. So “Unknown (track #9)” means the 9th person (or 9th new appearance) in that run — <strong>the video is not loaded multiple times</strong>; it’s one run with multiple people detected.<br>
+      <strong style="color: var(--text);">Recording:</strong> For <em>live</em> cameras, one recording per camera is created; when you <strong>Stop</strong> the pipeline, that file is closed and <strong>moved to the archive folder</strong> automatically. When you analyse a <em>recording file</em>, the app reads it once and does not create a new recording.
+    </div>
+
+    <div class="filter-bar">
+      <label>Camera <select id="filter-camera"><option value="">All</option></select></label>
+      <label>From <input type="datetime-local" id="filter-start"></label>
+      <label>To <input type="datetime-local" id="filter-end"></label>
+      <button type="button" class="btn btn-primary" onclick="loadReport()">Apply</button>
+    </div>
+
+    <div id="report-list">
+      <p style="color: var(--text-muted);">Loading…</p>
+    </div>
+  </main>
+
+  <script>
+    const API = '/api';
+    async function loadReport() {
+      const cameraId = document.getElementById('filter-camera').value || undefined;
+      const start = document.getElementById('filter-start').value ? new Date(document.getElementById('filter-start').value).toISOString() : undefined;
+      const end = document.getElementById('filter-end').value ? new Date(document.getElementById('filter-end').value).toISOString() : undefined;
+      let url = `${API}/detections/report?limit=100`;
+      if (cameraId) url += '&camera_id=' + cameraId;
+      if (start) url += '&start=' + encodeURIComponent(start);
+      if (end) url += '&end=' + encodeURIComponent(end);
+      try {
+        const r = await fetch(url);
+        if (!r.ok) throw new Error(r.statusText);
+        const list = await r.json();
+        const el = document.getElementById('report-list');
+        if (list.length === 0) {
+          el.innerHTML = '<p style="color: var(--text-muted);">No person detections in this period. Start the pipeline to capture authorised and unauthorised sightings.</p>';
+          return;
+        }
+        el.innerHTML = list.map(d => {
+          let typeClass = 'unauthorised';
+          let label = 'Unauthorised';
+          if (d.type === 'authorised') {
+            typeClass = 'authorised';
+            label = 'Authorised';
+          } else if (d.type === 'off_shift') {
+            typeClass = 'unauthorised';
+            label = 'Matched (other shift)';
+          }
+          const name = d.employee_name || ('Unknown (track #' + (d.track_id || '?') + ')');
+          const seen = new Date(d.seen_at).toLocaleString();
+          const img = d.image_path
+            ? `<img class="thumb" src="${d.image_path}" alt="Capture">`
+            : '<div class="thumb missing">No image</div>';
+          return `
+            <div class="detection-card">
+              <div>${img}</div>
+              <div class="meta">
+                <span class="type-badge ${typeClass}">${label}</span>
+                <div><strong>${escapeHtml(name)}</strong></div>
+                <div style="font-size: 0.9rem; color: var(--text-muted);">${escapeHtml(d.camera_name)} — ${seen}</div>
+                <div style="font-size: 0.85rem; margin-top: 0.35rem;">${escapeHtml(d.description)}</div>
+              </div>
+            </div>`;
+        }).join('');
+      } catch (e) {
+        document.getElementById('report-list').innerHTML = '<p style="color: var(--danger);">Failed to load report: ' + escapeHtml(e.message) + '</p>';
+      }
+    }
+    function escapeHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s == null ? '' : s;
+      return d.innerHTML;
+    }
+    async function loadCameras() {
+      try {
+        const r = await fetch(API + '/cameras/');
+        if (!r.ok) return;
+        const cams = await r.json();
+        const sel = document.getElementById('filter-camera');
+        cams.forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c.id;
+          opt.textContent = c.name;
+          sel.appendChild(opt);
+        });
+      } catch (_) {}
+    }
+    loadCameras();
+    loadReport();
+  </script>
+</body>
+</html>
