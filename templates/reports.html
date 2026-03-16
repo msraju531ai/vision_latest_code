@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VisionAI — Anomaly Reports</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <style>
+    .hint-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; margin-bottom: 1.5rem; font-size: 0.9rem; color: var(--text-muted); }
+    .hint-box strong { color: var(--primary); }
+    .report-form { max-width: 520px; margin-bottom: 1.5rem; }
+    .report-form .form-row { margin-bottom: 1rem; }
+    .report-form label { display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.35rem; }
+    .report-form input { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 0.55rem 0.75rem; font-size: 0.95rem; }
+    .report-form input[type="datetime-local"] { font-family: inherit; }
+    .reports-list { margin-top: 1rem; }
+    .report-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 1rem; margin-bottom: 0.75rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem;
+    }
+    .report-card .report-meta { flex: 1; min-width: 200px; }
+    .report-card .report-title { font-weight: 600; margin-bottom: 0.2rem; }
+    .report-card .report-period { font-size: 0.85rem; color: var(--text-muted); }
+    .report-card .report-count { font-size: 0.9rem; color: var(--primary); font-weight: 600; }
+    .report-card .report-actions { display: flex; gap: 0.5rem; }
+    .report-detail { margin-top: 1rem; }
+    .report-detail .summary-text { white-space: pre-wrap; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem; padding: 1rem; background: var(--bg); border-radius: 6px; }
+    .msg { padding: 0.6rem 1rem; border-radius: 6px; margin-bottom: 1rem; font-size: 0.9rem; }
+    .msg.success { background: rgba(34,197,94,0.15); color: var(--success); }
+    .msg.error { background: rgba(239,68,68,0.15); color: #f87171; }
+    .back-link { display: inline-block; margin-bottom: 1rem; color: var(--primary); text-decoration: none; font-size: 0.9rem; }
+    .back-link:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <nav class="navbar">
+    <div class="brand">VisionAI</div>
+    <div class="nav-links">
+      <a href="/">Dashboard</a>
+      <a href="/employees">Employees</a>
+      <a href="/reports">Reports</a>
+      <a href="/detections">Person detections</a>
+      <a href="/docs" target="_blank">API Docs</a>
+    </div>
+  </nav>
+
+  <main class="container">
+    <h1 style="margin-bottom: 0.5rem;">Anomaly Reports</h1>
+    <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">Save and view anomaly reports from video analysis. Start the pipeline on the Dashboard to record video and detect anomalies.</p>
+
+    <div class="hint-box">
+      <strong>Recording & recognition:</strong> Go to <a href="/" style="color: var(--primary);">Dashboard</a> → start the pipeline for your camera(s). 
+      Video is recorded and employees are recognised automatically. Anomalies (idle time, unauthorized presence, etc.) are logged as events. 
+      <strong>To run on existing recordings</strong> (e.g. under <code>data/recordings/Office_Corridor/</code>): use the API 
+      <code>POST /api/pipeline/start/{camera_id}?source_url=E:/path/to/recording.mp4</code> (see <a href="/docs" target="_blank">API docs</a> or <code>docs/RUN_RECORDINGS.md</code>).
+      Use the form below to save a report for a time period and view it here.
+    </div>
+
+    <div id="form-msg"></div>
+
+    <section class="panel">
+      <h2 style="margin-bottom: 1rem;">Generate & save report</h2>
+      <form id="report-form" class="report-form">
+        <div class="form-row">
+          <label for="period-start">Period start (date & time)</label>
+          <input type="datetime-local" id="period-start" required step="1">
+        </div>
+        <div class="form-row">
+          <label for="period-end">Period end (date & time)</label>
+          <input type="datetime-local" id="period-end" required step="1">
+        </div>
+        <div class="form-row">
+          <label for="report-title">Report title (optional)</label>
+          <input type="text" id="report-title" placeholder="e.g. Night shift 02-Mar">
+        </div>
+        <button type="submit" class="btn btn-primary">Save report</button>
+      </form>
+    </section>
+
+    <section class="panel" id="saved-reports-panel">
+      <div class="panel-header">
+        <h2>Saved reports</h2>
+        <button type="button" class="btn btn-primary btn-sm" onclick="loadReports()">Refresh</button>
+      </div>
+      <div id="reports-list" class="reports-list">
+        <p style="color: var(--text-muted);">Loading…</p>
+      </div>
+    </section>
+
+    <div id="report-detail" class="report-detail hidden">
+      <a href="#" class="back-link" id="back-link">← Back to list</a>
+      <div class="panel">
+        <h2 id="detail-title">Report</h2>
+        <div id="detail-summary" class="summary-text"></div>
+        <table class="events-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Camera</th>
+              <th>Type</th>
+              <th>Severity</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody id="detail-events"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    const API = '/api';
+    const listEl = document.getElementById('reports-list');
+    const detailEl = document.getElementById('report-detail');
+    const detailTitle = document.getElementById('detail-title');
+    const detailSummary = document.getElementById('detail-summary');
+    const detailEvents = document.getElementById('detail-events');
+    const backLink = document.getElementById('back-link');
+
+    function setDefaultPeriod() {
+      const end = new Date();
+      const start = new Date(end);
+      start.setHours(start.getHours() - 24);
+      document.getElementById('period-end').value = end.toISOString().slice(0, 19);
+      document.getElementById('period-start').value = start.toISOString().slice(0, 19);
+    }
+    setDefaultPeriod();
+
+    function showMsg(text, isError) {
+      const el = document.getElementById('form-msg');
+      el.className = 'msg ' + (isError ? 'error' : 'success');
+      el.textContent = text;
+      el.style.display = 'block';
+      setTimeout(() => { el.style.display = 'none'; }, 5000);
+    }
+
+    async function loadReports() {
+      try {
+        const r = await fetch(API + '/reports/');
+        if (!r.ok) throw new Error('Failed to load reports');
+        const reports = await r.json();
+        if (reports.length === 0) {
+          listEl.innerHTML = '<p style="color: var(--text-muted);">No saved reports yet. Generate one using the form above.</p>';
+          return;
+        }
+        listEl.innerHTML = reports.map(r => {
+          const period = new Date(r.period_start).toLocaleString() + ' – ' + new Date(r.period_end).toLocaleString();
+          const title = r.title || ('Report #' + r.id);
+          return `
+            <div class="report-card" data-id="${r.id}">
+              <div class="report-meta">
+                <div class="report-title">${escapeHtml(title)}</div>
+                <div class="report-period">${period}</div>
+                <div class="report-count">${r.event_count} anomaly(ies)</div>
+              </div>
+              <div class="report-actions">
+                <button type="button" class="btn btn-primary btn-sm" onclick="viewReport(${r.id})">View</button>
+                <button type="button" class="btn btn-danger btn-sm" onclick="deleteReport(${r.id})">Delete</button>
+              </div>
+            </div>`;
+        }).join('');
+      } catch (e) {
+        listEl.innerHTML = '<p style="color: var(--danger);">Failed to load reports.</p>';
+        console.error(e);
+      }
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    async function viewReport(id) {
+      try {
+        const r = await fetch(API + '/reports/' + id);
+        if (!r.ok) throw new Error('Failed to load report');
+        const report = await r.json();
+        detailTitle.textContent = report.title || ('Report #' + report.id);
+        detailSummary.textContent = report.summary_text || 'No summary.';
+        detailEvents.innerHTML = (report.events || []).map(ev => `
+          <tr>
+            <td>${new Date(ev.timestamp).toLocaleString()}</td>
+            <td>${ev.camera_id}</td>
+            <td>${escapeHtml(ev.event_type)}</td>
+            <td><span class="severity-badge severity-${ev.severity}">${ev.severity}</span></td>
+            <td>${escapeHtml(ev.description || '')}</td>
+          </tr>
+        `).join('') || '<tr><td colspan="5">No events in this period.</td></tr>';
+        document.getElementById('report-form').closest('section').style.display = 'none';
+        document.getElementById('saved-reports-panel').style.display = 'none';
+        detailEl.classList.remove('hidden');
+      } catch (e) {
+        alert(e.message);
+      }
+    }
+
+    backLink.onclick = (e) => {
+      e.preventDefault();
+      detailEl.classList.add('hidden');
+      document.getElementById('report-form').closest('section').style.display = 'block';
+      document.getElementById('saved-reports-panel').style.display = 'block';
+      loadReports();
+    };
+
+    async function deleteReport(id) {
+      if (!confirm('Delete this report?')) return;
+      try {
+        const r = await fetch(API + '/reports/' + id, { method: 'DELETE' });
+        if (!r.ok) throw new Error('Delete failed');
+        loadReports();
+      } catch (e) {
+        alert(e.message);
+      }
+    }
+
+    document.getElementById('report-form').onsubmit = async (e) => {
+      e.preventDefault();
+      const start = document.getElementById('period-start').value;
+      const end = document.getElementById('period-end').value;
+      const title = document.getElementById('report-title').value.trim() || null;
+      try {
+        const r = await fetch(API + '/reports/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            period_start: start ? new Date(start).toISOString() : null,
+            period_end: end ? new Date(end).toISOString() : null,
+            title: title || null
+          })
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err.detail || r.statusText || 'Failed');
+        }
+        const report = await r.json();
+        showMsg('Report saved: ' + (report.event_count) + ' anomaly(ies) in period.');
+        loadReports();
+      } catch (err) {
+        showMsg(err.message || 'Failed to save report.', true);
+      }
+    };
+
+    loadReports();
+  </script>
+</body>
+</html>

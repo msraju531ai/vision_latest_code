@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VisionAI — Employees</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <style>
+    .emp-form { max-width: 480px; margin-bottom: 2rem; }
+    .emp-form .form-row { margin-bottom: 1rem; }
+    .emp-form label { display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.35rem; }
+    .emp-form input, .emp-form select {
+      width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+      border-radius: 6px; padding: 0.55rem 0.75rem; font-size: 0.95rem;
+    }
+    .emp-form input[type="file"] { padding: 0.4rem; }
+    .emp-summary h2 { margin-bottom: 1rem; font-size: 1.1rem; }
+    .emp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 1rem; }
+    .emp-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 1rem; display: flex; align-items: center; gap: 1rem;
+    }
+    .emp-card .emp-photo {
+      width: 72px; height: 72px; border-radius: 8px; object-fit: cover; background: var(--bg);
+    }
+    .emp-card .emp-info { flex: 1; min-width: 0; }
+    .emp-card .emp-name { font-weight: 600; margin-bottom: 0.2rem; }
+    .emp-card .emp-shift { font-size: 0.85rem; color: var(--text-muted); }
+    .emp-card .emp-status { font-size: 0.75rem; margin-top: 0.35rem; }
+    .emp-card .emp-status.active { color: var(--success); }
+    .emp-card .emp-status.inactive { color: var(--text-muted); }
+    .emp-card .emp-actions { margin-top: 0.5rem; }
+    .msg { padding: 0.6rem 1rem; border-radius: 6px; margin-bottom: 1rem; font-size: 0.9rem; }
+    .msg.success { background: rgba(34,197,94,0.15); color: var(--success); }
+    .msg.error { background: rgba(239,68,68,0.15); color: #f87171; }
+    .summary-stats { display: flex; gap: 1.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+    .summary-stats span { font-size: 0.9rem; color: var(--text-muted); }
+    .summary-stats strong { color: var(--primary); margin-right: 0.25rem; }
+  </style>
+</head>
+<body>
+  <nav class="navbar">
+    <div class="brand">VisionAI</div>
+    <div class="nav-links">
+      <a href="/">Dashboard</a>
+      <a href="/employees" class="active">Employees</a>
+      <a href="/reports">Reports</a>
+      <a href="/detections">Person detections</a>
+      <a href="/docs" target="_blank">API Docs</a>
+    </div>
+  </nav>
+
+  <main class="container">
+    <h1 style="margin-bottom: 1rem;">Employee Registration</h1>
+    <div id="form-msg"></div>
+    <form id="emp-form" class="emp-form">
+      <div class="form-row">
+        <label for="emp-name">Full Name *</label>
+        <input type="text" id="emp-name" required placeholder="e.g. John Doe">
+      </div>
+      <div class="form-row">
+        <label for="emp-shift">Shift (Day / Night)</label>
+        <select id="emp-shift">
+          <option value="">— No shift —</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label for="emp-photo">Face Photo * (for recognition)</label>
+        <input type="file" id="emp-photo" accept="image/*" required>
+      </div>
+      <button type="submit" class="btn btn-primary">Register Employee</button>
+    </form>
+
+    <section class="panel emp-summary">
+      <div class="panel-header">
+        <h2>Employee Summary</h2>
+        <button type="button" class="btn btn-primary btn-sm" onclick="loadEmployees()">Refresh</button>
+      </div>
+      <div class="summary-stats" id="summary-stats">
+        <span><strong id="stat-total">0</strong> Total</span>
+        <span><strong id="stat-active">0</strong> Active</span>
+      </div>
+      <div class="emp-grid" id="emp-grid">
+        <p style="color: var(--text-muted);">Loading…</p>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const API = '/api';
+    let shifts = [];
+
+    async function loadShifts() {
+      try {
+        const r = await fetch(API + '/shifts/');
+        if (!r.ok) throw new Error('Failed to load shifts');
+        shifts = await r.json();
+        const sel = document.getElementById('emp-shift');
+        sel.innerHTML = '<option value="">— No shift —</option>' +
+          shifts.map(s => `<option value="${s.id}">${s.name} (${s.start_time}–${s.end_time})</option>`).join('');
+      } catch (e) {
+        console.warn('Shifts load failed', e);
+      }
+    }
+
+    async function loadEmployees() {
+      const grid = document.getElementById('emp-grid');
+      try {
+        const r = await fetch(API + '/employees/');
+        if (!r.ok) throw new Error('Failed to load employees');
+        const list = await r.json();
+        document.getElementById('stat-total').textContent = list.length;
+        document.getElementById('stat-active').textContent = list.filter(e => e.is_active).length;
+        if (list.length === 0) {
+          grid.innerHTML = '<p style="color: var(--text-muted);">No employees registered yet. Use the form above to add one.</p>';
+          return;
+        }
+        grid.innerHTML = list.map(emp => {
+          const shift = shifts.find(s => s.id === emp.shift_schedule_id);
+          const shiftName = shift ? shift.name : '—';
+          const photoUrl = emp.photo_path ? `${API}/employees/${emp.id}/photo?t=${Date.now()}` : '';
+          return `
+            <div class="emp-card" data-id="${emp.id}">
+              <img class="emp-photo" src="${photoUrl || '#'}" alt="" onerror="this.style.display='none'">
+              <div class="emp-info">
+                <div class="emp-name">${escapeHtml(emp.name)}</div>
+                <div class="emp-shift">${escapeHtml(shiftName)}</div>
+                <div class="emp-status ${emp.is_active ? 'active' : 'inactive'}">${emp.is_active ? 'Active' : 'Inactive'}</div>
+                <div class="emp-actions">
+                  <button type="button" class="btn btn-danger btn-sm" onclick="deleteEmployee(${emp.id})">Delete</button>
+                </div>
+              </div>
+            </div>`;
+        }).join('');
+      } catch (e) {
+        grid.innerHTML = '<p style="color: var(--danger);">Failed to load employees. Check console.</p>';
+        console.error(e);
+      }
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function showMsg(text, isError = false) {
+      const el = document.getElementById('form-msg');
+      el.className = 'msg ' + (isError ? 'error' : 'success');
+      el.textContent = text;
+      el.style.display = 'block';
+      setTimeout(() => { el.style.display = 'none'; }, 5000);
+    }
+
+    document.getElementById('emp-form').onsubmit = async (e) => {
+      e.preventDefault();
+      const name = document.getElementById('emp-name').value.trim();
+      const shiftId = document.getElementById('emp-shift').value;
+      const fileInput = document.getElementById('emp-photo');
+      if (!fileInput.files || !fileInput.files[0]) {
+        showMsg('Please select a face photo.', true);
+        return;
+      }
+      try {
+        const createRes = await fetch(API + '/employees/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, shift_schedule_id: shiftId ? parseInt(shiftId, 10) : null })
+        });
+        if (!createRes.ok) {
+          const err = await createRes.json().catch(() => ({}));
+          throw new Error(err.detail || createRes.statusText || 'Create failed');
+        }
+        const emp = await createRes.json();
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        const photoRes = await fetch(API + '/employees/' + emp.id + '/photo', {
+          method: 'POST',
+          body: formData
+        });
+        if (!photoRes.ok) throw new Error('Photo upload failed');
+        showMsg(`Employee "${name}" registered successfully.`);
+        document.getElementById('emp-name').value = '';
+        document.getElementById('emp-photo').value = '';
+        loadEmployees();
+      } catch (err) {
+        showMsg(err.message || 'Registration failed.', true);
+      }
+    };
+
+    async function deleteEmployee(id) {
+      if (!confirm('Delete this employee?')) return;
+      try {
+        const r = await fetch(API + '/employees/' + id, { method: 'DELETE' });
+        if (!r.ok) throw new Error('Delete failed');
+        loadEmployees();
+      } catch (e) {
+        alert(e.message);
+      }
+    }
+
+    loadShifts().then(loadEmployees);
+  </script>
+</body>
+</html>
